@@ -1,0 +1,54 @@
+name: PhotoBorder
+options:
+  bundleIdPrefix: com.thegreatstate.photoborder
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  PhotoBorderKit:
+    path: PhotoBorderKit
+targets:
+  PhotoBorderApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - target: PhotoBorderExtension
+        embed: true
+      - package: PhotoBorderKit
+        product: PhotoBorderKit
+    info:
+      path: App/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thegreatstate.photoborder
+        PRODUCT_NAME: Border
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+  PhotoBorderExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Extension
+    dependencies:
+      - package: PhotoBorderKit
+        product: PhotoBorderKit
+    info:
+      path: Extension/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.thegreatstate.photoborder.BorderFrame
+        PRODUCT_NAME: Border Frame
+        SWIFT_VERSION: "5.0"
+        SKIP_INSTALL: "YES"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+schemes:
+  PhotoBorderApp:
+    build:
+      targets:
+        PhotoBorderApp: all
+    run:
+      config: Debug
