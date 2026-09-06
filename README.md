@@ -88,20 +88,32 @@ wired up as the `scanned-rebate-5x7` template via `overlayAssetName` +
 `overlayPhotoWindow`. Worth knowing how, since you said more reference
 photos are coming and I'll repeat this:
 
-**What didn't work:** tracing all four edges independently by scanning
-pixel brightness from each side inward. It's fine on the top and left,
-but on your reference photo the dark car and boots sit directly against
-the black border with no brightness gap between them, so the same
-approach on the bottom/right edges couldn't tell "border" from "dark
-photo content" and produced a contaminated, obviously-wrong cutout.
+This took three attempts to get right, each exposing a real gap in the one
+before it:
 
-**What worked:** your carrier is a manufactured, straight-edged rectangle
-(not a hand-torn one), so I only trust the two sides that are
-unambiguous — top and left, where the sky and open ground give a clean
-brightness jump — measure the margin and rebate width there, and mirror
-those measurements to the bottom and right rather than re-detecting them.
-That gives a real cutout from your actual photo (not a synthetic
-reproduction) without ever having to threshold the contaminated areas.
+1. **Tracing all four edges independently**, scanning pixel brightness
+   inward from each side. Clean on the top and left, but the dark car and
+   boots sit directly against the black border on the bottom/right with no
+   brightness gap between them, so the scan couldn't tell "border" from
+   "dark photo content" there and produced an obviously-contaminated cutout.
+2. **Mirroring the top/left measurements to the bottom/right** instead of
+   re-detecting them (reasoning: it's a manufactured, straight-edged
+   rectangle, so the far sides should match). This assumed the print's
+   margins are perfectly symmetric, which they weren't quite — close enough
+   that it mostly worked, but off by a few pixels at the corners, which
+   showed up as a strip of the *original photo's actual white margin* still
+   visible instead of solid black exactly where you spotted it.
+3. **What actually shipped:** detect all four edges directly (not
+   mirrored), but per line (each row/column), reject any reading whose
+   width falls outside a plausible range *or* strays too far from that
+   edge's own robust median position — a straight rectangle has no business
+   curving, so a contaminated stretch gets held at the median instead of
+   interpolated (interpolating between two "plausible-looking" points on
+   either side of a bad patch let a coincidentally-plausible bad reading
+   drag a smooth, visibly-wrong bulge through the gap between them). Then,
+   within that geometric band, anything lighter than ~75% brightness is
+   dropped too, so antialiased/lighter pixels the geometry alone still let
+   through don't show up as a washed-out edge.
 
 This only works because the border is a clean rectangle. A hand-torn or
 irregular carrier edge (like the "sloppy black" look from your first
