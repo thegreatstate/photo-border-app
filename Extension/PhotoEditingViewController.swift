@@ -12,7 +12,12 @@ class PhotoEditingViewController: UIViewController, PHContentEditingController {
 
     private var input: PHContentEditingInput?
     private var sourceImage: UIImage?
-    private var selectedTemplateID: String = BorderTemplateCatalog.polaroid.id
+    private var editingState = EditingState(
+        templateID: BorderTemplateCatalog.polaroid.id,
+        adjustments: .identity,
+        fit: .crop,
+        textLayers: EditingDefaults.textLayers
+    )
     private var hostingController: UIHostingController<EditingView>?
 
     private static let formatIdentifier = "com.thegreatstate.photoborder"
@@ -35,7 +40,7 @@ class PhotoEditingViewController: UIViewController, PHContentEditingController {
             completionHandler(nil)
             return
         }
-        let templateID = selectedTemplateID
+        let state = editingState
 
         DispatchQueue.global(qos: .userInitiated).async {
             // fullSizeImageURL points at the original file (JPEG/HEIC in the
@@ -48,8 +53,12 @@ class PhotoEditingViewController: UIViewController, PHContentEditingController {
                 fullImage = sourceImage
             }
 
-            guard let template = BorderTemplateCatalog.builtIn.first(where: { $0.id == templateID }),
-                  let rendered = BorderRenderer.render(image: fullImage, template: template),
+            guard let template = BorderTemplateCatalog.builtIn.first(where: { $0.id == state.templateID }) else {
+                DispatchQueue.main.async { completionHandler(nil) }
+                return
+            }
+            let adjusted = PhotoAdjuster.apply(state.adjustments, to: fullImage)
+            guard let rendered = BorderRenderer.render(image: adjusted, template: template, fit: state.fit, textLayers: state.textLayers),
                   let jpegData = rendered.jpegData(compressionQuality: 0.95) else {
                 DispatchQueue.main.async { completionHandler(nil) }
                 return
@@ -59,7 +68,7 @@ class PhotoEditingViewController: UIViewController, PHContentEditingController {
             output.adjustmentData = PHAdjustmentData(
                 formatIdentifier: Self.formatIdentifier,
                 formatVersion: Self.formatVersion,
-                data: Data(templateID.utf8)
+                data: Data(state.templateID.utf8)
             )
 
             do {
@@ -79,9 +88,9 @@ class PhotoEditingViewController: UIViewController, PHContentEditingController {
         let editingView = EditingView(
             sourceImage: initialImage,
             templates: BorderTemplateCatalog.builtIn,
-            selectedTemplateID: selectedTemplateID
-        ) { [weak self] newID in
-            self?.selectedTemplateID = newID
+            selectedTemplateID: editingState.templateID
+        ) { [weak self] newState in
+            self?.editingState = newState
         }
         let hosting = UIHostingController(rootView: editingView)
         addChild(hosting)

@@ -4,36 +4,32 @@ public enum BorderRenderer {
 
     /// Composites `image` into `template`, producing the final bordered photo
     /// at (approximately) the source photo's own resolution.
-    public static func render(image: UIImage, template: BorderTemplate, aspectRatios: [AspectRatio] = AspectRatio.builtIn) -> UIImage? {
+    public static func render(
+        image: UIImage,
+        template: BorderTemplate,
+        fit: PhotoFitMode = .crop,
+        textLayers: [TextLayer] = [],
+        aspectRatios: [AspectRatio] = AspectRatio.builtIn
+    ) -> UIImage? {
+        let result: UIImage?
         if let overlayName = template.overlayAssetName, let window = template.overlayPhotoWindow {
-            return renderWithOverlay(image: image, overlayAssetName: overlayName, photoWindow: window)
+            result = renderWithOverlay(image: image, overlayAssetName: overlayName, photoWindow: window, fit: fit)
+        } else {
+            result = renderProcedural(image: image, template: template, fit: fit, aspectRatios: aspectRatios)
         }
-        return renderProcedural(image: image, template: template, aspectRatios: aspectRatios)
+        guard let composited = result, !textLayers.isEmpty else { return result }
+        return drawTextLayers(textLayers, onto: composited)
     }
 
     // MARK: - Procedural bands (Polaroid, keyline mat, negative-carrier rebate)
 
-    private static func renderProcedural(image: UIImage, template: BorderTemplate, aspectRatios: [AspectRatio]) -> UIImage? {
-        guard let cgImage = image.cgImage,
-              let aspect = aspectRatios.first(where: { $0.id == template.aspectRatioID }),
+    private static func renderProcedural(image: UIImage, template: BorderTemplate, fit: PhotoFitMode, aspectRatios: [AspectRatio]) -> UIImage? {
+        guard let aspect = aspectRatios.first(where: { $0.id == template.aspectRatioID }),
               !template.bands.isEmpty else { return nil }
 
-        let sourceSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let sourceIsPortrait = sourceSize.height >= sourceSize.width
-        let ratio = CGFloat(aspect.longToShort)
-
-        let photoWidth: CGFloat
-        let photoHeight: CGFloat
-        if sourceIsPortrait {
-            photoWidth = min(sourceSize.width, sourceSize.height / ratio)
-            photoHeight = photoWidth * ratio
-        } else {
-            photoHeight = min(sourceSize.height, sourceSize.width / ratio)
-            photoWidth = photoHeight * ratio
+        guard let (croppedCG, photoWidth, photoHeight) = preparedPhoto(image: image, longToShort: aspect.longToShort, fit: fit) else {
+            return nil
         }
-
-        let cropRect = centeredCropRect(sourceSize: sourceSize, targetSize: CGSize(width: photoWidth, height: photoHeight))
-        guard let croppedCG = cgImage.cropping(to: cropRect) else { return nil }
 
         let shortSide = min(photoWidth, photoHeight)
         let totalBandWidth = template.bands.reduce(0.0) { $0 + $1.widthFraction }
@@ -115,28 +111,20 @@ public enum BorderRenderer {
 
     // MARK: - Overlay-driven bands (your Photoshop-extracted carrier borders)
 
-    private static func renderWithOverlay(image: UIImage, overlayAssetName: String, photoWindow: NormalizedRect) -> UIImage? {
+    private static func renderWithOverlay(image: UIImage, overlayAssetName: String, photoWindow: NormalizedRect, fit: PhotoFitMode) -> UIImage? {
         guard let overlay = UIImage(named: overlayAssetName),
-              let overlayCG = overlay.cgImage,
-              let cgImage = image.cgImage else { return nil }
+              let overlayCG = overlay.cgImage else { return nil }
 
         let canvasSize = CGSize(width: overlayCG.width, height: overlayCG.height)
         let photoRect = CGRect(x: photoWindow.x * canvasSize.width,
                                 y: photoWindow.y * canvasSize.height,
                                 width: photoWindow.width * canvasSize.width,
                                 height: photoWindow.height * canvasSize.height)
+        let windowLongToShort = max(photoRect.width, photoRect.height) / min(photoRect.width, photoRect.height)
 
-        let sourceSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let targetRatio = photoRect.width / photoRect.height
-        let sourceRatio = sourceSize.width / sourceSize.height
-        var cropSize = sourceSize
-        if sourceRatio > targetRatio {
-            cropSize.width = sourceSize.height * targetRatio
-        } else {
-            cropSize.height = sourceSize.width / targetRatio
+        guard let (croppedCG, _, _) = preparedPhoto(image: image, longToShort: Double(windowLongToShort), fit: fit) else {
+            return nil
         }
-        let cropRect = centeredCropRect(sourceSize: sourceSize, targetSize: cropSize)
-        guard let croppedCG = cgImage.cropping(to: cropRect) else { return nil }
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -150,6 +138,84 @@ public enum BorderRenderer {
         }
     }
 
+    // MARK: - Shared photo preparation (crop or 9-slice reflow to a target ratio)
+
+    /// Produces a photo-window-ready `CGImage` at the given long/short ratio,
+    /// plus its pixel width/height, using whichever `fit` strategy was asked
+    /// for. `longToShort` is unsigned — orientation (portrait vs. landscape)
+    /// is taken from the source image itself.
+    private static func preparedPhoto(image: UIImage, longToShort: Double, fit: PhotoFitMode) -> (CGImage, CGFloat, CGFloat)? {
+        guard let cgImage = image.cgImage else { return nil }
+        let sourceSize = CGSize(width: cgImage.width, height: cgImage.height)
+        let sourceIsPortrait = sourceSize.height >= sourceSize.width
+        let ratio = CGFloat(longToShort)
+
+        switch fit {
+        case .crop:
+            let photoWidth: CGFloat
+            let photoHeight: CGFloat
+            if sourceIsPortrait {
+                photoWidth = min(sourceSize.width, sourceSize.height / ratio)
+                photoHeight = photoWidth * ratio
+            } else {
+                photoHeight = min(sourceSize.height, sourceSize.width / ratio)
+                photoWidth = photoHeight * ratio
+            }
+            let cropRect = centeredCropRect(sourceSize: sourceSize, targetSize: CGSize(width: photoWidth, height: photoHeight))
+            guard let cropped = cgImage.cropping(to: cropRect) else { return nil }
+            return (cropped, photoWidth, photoHeight)
+
+        case .reflow(let cornerFraction):
+            guard let reflowed = reflowToAspect(cgImage: cgImage, sourceSize: sourceSize, sourceIsPortrait: sourceIsPortrait,
+                                                 longToShort: ratio, cornerFraction: CGFloat(cornerFraction)) else {
+                // Fall back to a plain crop rather than failing the whole render.
+                return preparedPhoto(image: image, longToShort: longToShort, fit: .crop)
+            }
+            return (reflowed, CGFloat(reflowed.width), CGFloat(reflowed.height))
+        }
+    }
+
+    /// Reshapes `cgImage` to exactly `longToShort` without cropping: a
+    /// `cornerFraction`-sized margin at each edge is copied pixel-for-pixel,
+    /// and only the band between them stretches or compresses to make up the
+    /// difference — a 9-slice reflow instead of a crop.
+    private static func reflowToAspect(cgImage: CGImage, sourceSize: CGSize, sourceIsPortrait: Bool, longToShort: CGFloat, cornerFraction: CGFloat) -> CGImage? {
+        let W = sourceSize.width, H = sourceSize.height
+        let shortSide = min(W, H)
+        let targetShort = shortSide
+        let targetLong = targetShort * longToShort
+        let targetW = sourceIsPortrait ? targetShort : targetLong
+        let targetH = sourceIsPortrait ? targetLong : targetShort
+
+        let corner = shortSide * cornerFraction
+        let safeCorner = min(corner, W / 2 - 1, H / 2 - 1, targetW / 2 - 1, targetH / 2 - 1)
+        guard safeCorner > 1 else { return nil }
+
+        let srcXs: [CGFloat] = [0, safeCorner, W - safeCorner, W]
+        let srcYs: [CGFloat] = [0, safeCorner, H - safeCorner, H]
+        let dstXs: [CGFloat] = [0, safeCorner, targetW - safeCorner, targetW]
+        let dstYs: [CGFloat] = [0, safeCorner, targetH - safeCorner, targetH]
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: targetW, height: targetH), format: format)
+        let image = renderer.image { _ in
+            for row in 0..<3 {
+                for col in 0..<3 {
+                    let srcRect = CGRect(x: srcXs[col], y: srcYs[row],
+                                          width: srcXs[col + 1] - srcXs[col], height: srcYs[row + 1] - srcYs[row]).integral
+                    let dstRect = CGRect(x: dstXs[col], y: dstYs[row],
+                                          width: dstXs[col + 1] - dstXs[col], height: dstYs[row + 1] - dstYs[row])
+                    guard srcRect.width > 0, srcRect.height > 0, dstRect.width > 0, dstRect.height > 0,
+                          let patch = cgImage.cropping(to: srcRect) else { continue }
+                    UIImage(cgImage: patch).draw(in: dstRect)
+                }
+            }
+        }
+        return image.cgImage
+    }
+
     private static func centeredCropRect(sourceSize: CGSize, targetSize: CGSize) -> CGRect {
         let x = ((sourceSize.width - targetSize.width) / 2).rounded(.down)
         let y = ((sourceSize.height - targetSize.height) / 2).rounded(.down)
@@ -158,6 +224,43 @@ public enum BorderRenderer {
             width: min(targetSize.width.rounded(.down), sourceSize.width),
             height: min(targetSize.height.rounded(.down), sourceSize.height)
         )
+    }
+
+    // MARK: - Text layers (signature / title / numbering)
+
+    private static func drawTextLayers(_ layers: [TextLayer], onto image: UIImage) -> UIImage {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        return renderer.image { _ in
+            image.draw(at: .zero)
+            let shortSide = min(image.size.width, image.size.height)
+            for layer in layers {
+                guard !layer.text.isEmpty, let color = UIColor(hex: layer.colorHex) else { continue }
+                let fontSize = CGFloat(layer.fontSizeFraction) * shortSide
+                let font = layer.fontName == FontChoice.system
+                    ? UIFont.systemFont(ofSize: fontSize)
+                    : (UIFont(name: layer.fontName, size: fontSize) ?? UIFont.systemFont(ofSize: fontSize))
+
+                let paragraph = NSMutableParagraphStyle()
+                switch layer.alignment {
+                case .left: paragraph.alignment = .left
+                case .center: paragraph.alignment = .center
+                case .right: paragraph.alignment = .right
+                }
+
+                let attributed = NSAttributedString(string: layer.text, attributes: [
+                    .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
+                ])
+                let textSize = attributed.size()
+                let anchorX = CGFloat(layer.position.x) * image.size.width
+                let anchorY = CGFloat(layer.position.y) * image.size.height
+                let rect = CGRect(x: anchorX - textSize.width / 2, y: anchorY - textSize.height / 2,
+                                   width: textSize.width, height: textSize.height)
+                attributed.draw(in: rect)
+            }
+        }
     }
 }
 

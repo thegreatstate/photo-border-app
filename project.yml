@@ -12,6 +12,7 @@ targets:
     platform: iOS
     sources:
       - path: App
+      - path: SharedAssets
     dependencies:
       - target: PhotoBorderExtension
         embed: true
@@ -32,6 +33,7 @@ targets:
     platform: iOS
     sources:
       - path: Extension
+      - path: SharedAssets
     dependencies:
       - package: PhotoBorderKit
         product: PhotoBorderKit

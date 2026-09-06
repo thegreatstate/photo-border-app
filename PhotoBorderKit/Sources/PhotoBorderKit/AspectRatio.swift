@@ -20,9 +20,10 @@ public struct AspectRatio: Identifiable, Hashable, Codable {
     public static let thirtyFiveMM = AspectRatio(id: "35mm", name: "35mm", longToShort: 3.0 / 2.0)
     public static let fourBySix = AspectRatio(id: "4x6", name: "4\u{00d7}6", longToShort: 6.0 / 4.0)
     public static let fiveBySix = AspectRatio(id: "5x6", name: "5\u{00d7}6", longToShort: 6.0 / 5.0)
+    public static let fiveBySeven = AspectRatio(id: "5x7", name: "5\u{00d7}7", longToShort: 7.0 / 5.0)
     public static let panoramic = AspectRatio(id: "pano", name: "Panoramic", longToShort: 3.0)
 
     public static let builtIn: [AspectRatio] = [
-        .square, .sixBySix, .thirtyFiveMM, .fourBySix, .fiveBySix, .panoramic,
+        .square, .sixBySix, .thirtyFiveMM, .fourBySix, .fiveBySix, .fiveBySeven, .panoramic,
     ]
 }
