@@ -11,6 +11,13 @@ public enum BorderRenderer {
         textLayers: [TextLayer] = [],
         aspectRatios: [AspectRatio] = AspectRatio.builtIn
     ) -> UIImage? {
+        // Bake in EXIF orientation before touching raw CGImage pixel
+        // dimensions anywhere below — a photo shot in portrait can have a
+        // landscape pixel buffer plus a rotation tag (very common straight
+        // out of `UIImage(contentsOfFile:)`), and every crop/fit computation
+        // here works in raw pixel space.
+        let image = normalizedUp(image)
+
         let result: UIImage?
         if let overlayName = template.overlayAssetName, let window = template.overlayPhotoWindow {
             result = renderWithOverlay(image: image, overlayAssetName: overlayName, photoWindow: window, fit: fit)
@@ -21,13 +28,28 @@ public enum BorderRenderer {
         return drawTextLayers(textLayers, onto: composited)
     }
 
+    private static func normalizedUp(_ image: UIImage) -> UIImage {
+        guard image.imageOrientation != .up else { return image }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: image.size, format: format)
+        return renderer.image { _ in image.draw(at: .zero) }
+    }
+
     // MARK: - Procedural bands (Polaroid, keyline mat, negative-carrier rebate)
 
     private static func renderProcedural(image: UIImage, template: BorderTemplate, fit: PhotoFitMode, aspectRatios: [AspectRatio]) -> UIImage? {
         guard let aspect = aspectRatios.first(where: { $0.id == template.aspectRatioID }),
               !template.bands.isEmpty else { return nil }
 
-        guard let (croppedCG, photoWidth, photoHeight) = preparedPhoto(image: image, longToShort: aspect.longToShort, fit: fit) else {
+        // Procedural templates adapt to the source's own orientation: a
+        // portrait photo gets a portrait crop, landscape gets landscape,
+        // both at the same long/short ratio.
+        guard let sourceCG = image.cgImage else { return nil }
+        let sourceIsPortrait = sourceCG.height >= sourceCG.width
+        let targetAspect: CGFloat = sourceIsPortrait ? 1 / CGFloat(aspect.longToShort) : CGFloat(aspect.longToShort)
+
+        guard let (croppedCG, photoWidth, photoHeight) = preparedPhoto(image: image, targetAspect: targetAspect, fit: fit) else {
             return nil
         }
 
@@ -120,9 +142,12 @@ public enum BorderRenderer {
                                 y: photoWindow.y * canvasSize.height,
                                 width: photoWindow.width * canvasSize.width,
                                 height: photoWindow.height * canvasSize.height)
-        let windowLongToShort = max(photoRect.width, photoRect.height) / min(photoRect.width, photoRect.height)
+        // Overlay templates have a fixed window shape baked into the art —
+        // crop to exactly that shape, regardless of the source photo's own
+        // orientation (unlike the procedural path, which adapts to it).
+        let windowAspect = photoRect.width / photoRect.height
 
-        guard let (croppedCG, _, _) = preparedPhoto(image: image, longToShort: Double(windowLongToShort), fit: fit) else {
+        guard let (croppedCG, _, _) = preparedPhoto(image: image, targetAspect: windowAspect, fit: fit) else {
             return nil
         }
 
@@ -140,52 +165,52 @@ public enum BorderRenderer {
 
     // MARK: - Shared photo preparation (crop or 9-slice reflow to a target ratio)
 
-    /// Produces a photo-window-ready `CGImage` at the given long/short ratio,
-    /// plus its pixel width/height, using whichever `fit` strategy was asked
-    /// for. `longToShort` is unsigned — orientation (portrait vs. landscape)
-    /// is taken from the source image itself.
-    private static func preparedPhoto(image: UIImage, longToShort: Double, fit: PhotoFitMode) -> (CGImage, CGFloat, CGFloat)? {
+    /// Produces a photo-window-ready `CGImage` at exactly `targetAspect`
+    /// (width / height), plus its pixel width/height, using whichever `fit`
+    /// strategy was asked for. `targetAspect` is signed and exact — callers
+    /// decide orientation themselves (adaptive for procedural templates,
+    /// fixed for overlay ones), it is never re-derived from the source here.
+    private static func preparedPhoto(image: UIImage, targetAspect: CGFloat, fit: PhotoFitMode) -> (CGImage, CGFloat, CGFloat)? {
         guard let cgImage = image.cgImage else { return nil }
         let sourceSize = CGSize(width: cgImage.width, height: cgImage.height)
-        let sourceIsPortrait = sourceSize.height >= sourceSize.width
-        let ratio = CGFloat(longToShort)
 
         switch fit {
         case .crop:
-            let photoWidth: CGFloat
-            let photoHeight: CGFloat
-            if sourceIsPortrait {
-                photoWidth = min(sourceSize.width, sourceSize.height / ratio)
-                photoHeight = photoWidth * ratio
-            } else {
-                photoHeight = min(sourceSize.height, sourceSize.width / ratio)
-                photoWidth = photoHeight * ratio
-            }
+            let photoWidth = min(sourceSize.width, sourceSize.height * targetAspect)
+            let photoHeight = photoWidth / targetAspect
             let cropRect = centeredCropRect(sourceSize: sourceSize, targetSize: CGSize(width: photoWidth, height: photoHeight))
             guard let cropped = cgImage.cropping(to: cropRect) else { return nil }
             return (cropped, photoWidth, photoHeight)
 
         case .reflow(let cornerFraction):
-            guard let reflowed = reflowToAspect(cgImage: cgImage, sourceSize: sourceSize, sourceIsPortrait: sourceIsPortrait,
-                                                 longToShort: ratio, cornerFraction: CGFloat(cornerFraction)) else {
+            guard let reflowed = reflowToAspect(cgImage: cgImage, sourceSize: sourceSize,
+                                                 targetAspect: targetAspect, cornerFraction: CGFloat(cornerFraction)) else {
                 // Fall back to a plain crop rather than failing the whole render.
-                return preparedPhoto(image: image, longToShort: longToShort, fit: .crop)
+                return preparedPhoto(image: image, targetAspect: targetAspect, fit: .crop)
             }
             return (reflowed, CGFloat(reflowed.width), CGFloat(reflowed.height))
         }
     }
 
-    /// Reshapes `cgImage` to exactly `longToShort` without cropping: a
-    /// `cornerFraction`-sized margin at each edge is copied pixel-for-pixel,
-    /// and only the band between them stretches or compresses to make up the
-    /// difference — a 9-slice reflow instead of a crop.
-    private static func reflowToAspect(cgImage: CGImage, sourceSize: CGSize, sourceIsPortrait: Bool, longToShort: CGFloat, cornerFraction: CGFloat) -> CGImage? {
+    /// Reshapes `cgImage` to exactly `targetAspect` (width / height) without
+    /// cropping: a `cornerFraction`-sized margin at each edge is copied
+    /// pixel-for-pixel, and only the band between them stretches or
+    /// compresses to make up the difference — a 9-slice reflow instead of a
+    /// crop. The source's own short side sets the output's shorter
+    /// dimension; `targetAspect` (not the source's own orientation) decides
+    /// which output dimension that short side becomes.
+    private static func reflowToAspect(cgImage: CGImage, sourceSize: CGSize, targetAspect: CGFloat, cornerFraction: CGFloat) -> CGImage? {
         let W = sourceSize.width, H = sourceSize.height
         let shortSide = min(W, H)
-        let targetShort = shortSide
-        let targetLong = targetShort * longToShort
-        let targetW = sourceIsPortrait ? targetShort : targetLong
-        let targetH = sourceIsPortrait ? targetLong : targetShort
+        let targetW: CGFloat
+        let targetH: CGFloat
+        if targetAspect >= 1 {
+            targetH = shortSide
+            targetW = shortSide * targetAspect
+        } else {
+            targetW = shortSide
+            targetH = shortSide / targetAspect
+        }
 
         let corner = shortSide * cornerFraction
         let safeCorner = min(corner, W / 2 - 1, H / 2 - 1, targetW / 2 - 1, targetH / 2 - 1)
