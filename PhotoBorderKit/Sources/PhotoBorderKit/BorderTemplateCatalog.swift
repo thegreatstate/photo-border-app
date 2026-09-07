@@ -71,7 +71,20 @@ public enum BorderTemplateCatalog {
         overlayPhotoWindow: NormalizedRect(x: 0.05625, y: 0.0355, width: 0.8875, height: 0.929)
     )
 
+    /// A pre-made transparent border you supplied directly (not extracted by
+    /// this codebase) — its interior and everything outside the black ring
+    /// were already cut to alpha 0, with a soft painterly texture on the
+    /// outer edge preserved as partial alpha. `overlayPhotoWindow` was
+    /// measured from the actual transparent window in the file.
+    public static let mamiyaBorder = BorderTemplate(
+        id: "mamiya-border",
+        name: "Mamiya Border",
+        aspectRatioID: AspectRatio.square.id,
+        overlayAssetName: "mamiya-border",
+        overlayPhotoWindow: NormalizedRect(x: 0.0554, y: 0.0556, width: 0.8936, height: 0.8973)
+    )
+
     public static let builtIn: [BorderTemplate] = [
-        .polaroid, .scannedRebate5x7, .negativeCarrier6x6, .negativeCarrier35mm, .keyline, .clean,
+        .polaroid, .scannedRebate5x7, .mamiyaBorder, .negativeCarrier6x6, .negativeCarrier35mm, .keyline, .clean,
     ]
 }

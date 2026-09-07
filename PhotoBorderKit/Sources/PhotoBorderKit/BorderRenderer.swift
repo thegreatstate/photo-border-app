@@ -8,6 +8,14 @@ public enum BorderRenderer {
         image: UIImage,
         template: BorderTemplate,
         fit: PhotoFitMode = .crop,
+        /// For overlay-based templates only: reshape the border artwork
+        /// itself (not just the photo) to this width/height aspect using
+        /// the same corner-preserving 9-slice technique as `PhotoFitMode
+        /// .reflow` — e.g. take a square Mamiya-style border to 4x6.
+        /// `nil` keeps the overlay at whatever aspect its artwork was
+        /// authored at (the existing, unchanged default). Ignored for
+        /// procedural templates, which already adapt to any aspect ratio.
+        targetOverlayAspect: Double? = nil,
         textLayers: [TextLayer] = [],
         aspectRatios: [AspectRatio] = AspectRatio.builtIn
     ) -> UIImage? {
@@ -20,7 +28,8 @@ public enum BorderRenderer {
 
         let result: UIImage?
         if let overlayName = template.overlayAssetName, let window = template.overlayPhotoWindow {
-            result = renderWithOverlay(image: image, overlayAssetName: overlayName, photoWindow: window, fit: fit)
+            result = renderWithOverlay(image: image, overlayAssetName: overlayName, photoWindow: window,
+                                        fit: fit, targetAspect: targetOverlayAspect.map(CGFloat.init))
         } else {
             result = renderProcedural(image: image, template: template, fit: fit, aspectRatios: aspectRatios)
         }
@@ -133,15 +142,34 @@ public enum BorderRenderer {
 
     // MARK: - Overlay-driven bands (your Photoshop-extracted carrier borders)
 
-    private static func renderWithOverlay(image: UIImage, overlayAssetName: String, photoWindow: NormalizedRect, fit: PhotoFitMode) -> UIImage? {
+    private static func renderWithOverlay(image: UIImage, overlayAssetName: String, photoWindow: NormalizedRect, fit: PhotoFitMode, targetAspect: CGFloat?) -> UIImage? {
         guard let overlay = UIImage(named: overlayAssetName),
-              let overlayCG = overlay.cgImage else { return nil }
+              let nativeOverlayCG = overlay.cgImage else { return nil }
 
-        let canvasSize = CGSize(width: overlayCG.width, height: overlayCG.height)
-        let photoRect = CGRect(x: photoWindow.x * canvasSize.width,
-                                y: photoWindow.y * canvasSize.height,
-                                width: photoWindow.width * canvasSize.width,
-                                height: photoWindow.height * canvasSize.height)
+        let nativeCanvasSize = CGSize(width: nativeOverlayCG.width, height: nativeOverlayCG.height)
+        let nativeWindow = CGRect(x: photoWindow.x * nativeCanvasSize.width,
+                                   y: photoWindow.y * nativeCanvasSize.height,
+                                   width: photoWindow.width * nativeCanvasSize.width,
+                                   height: photoWindow.height * nativeCanvasSize.height)
+
+        // If a different overall aspect was requested (e.g. taking a square
+        // border to 4x6), reshape the border artwork itself first, corners
+        // preserved, same as the photo's own 9-slice reflow. Otherwise use
+        // the art exactly as authored — the existing, unchanged behavior.
+        let overlayCG: CGImage
+        let canvasSize: CGSize
+        let photoRect: CGRect
+        if let targetAspect,
+           let reflowed = reflowOverlayArt(overlayCG: nativeOverlayCG, nativeWindow: nativeWindow, targetAspect: targetAspect) {
+            overlayCG = reflowed.image
+            canvasSize = CGSize(width: reflowed.image.width, height: reflowed.image.height)
+            photoRect = reflowed.window
+        } else {
+            overlayCG = nativeOverlayCG
+            canvasSize = nativeCanvasSize
+            photoRect = nativeWindow
+        }
+
         // Overlay templates have a fixed window shape baked into the art —
         // crop to exactly that shape, regardless of the source photo's own
         // orientation (unlike the procedural path, which adapts to it).
@@ -161,6 +189,67 @@ public enum BorderRenderer {
             UIImage(cgImage: croppedCG).draw(in: photoRect)
             UIImage(cgImage: overlayCG).draw(in: CGRect(origin: .zero, size: canvasSize))
         }
+    }
+
+    /// Reshapes overlay border artwork to `targetAspect` (width / height)
+    /// using the same corner-preserving 9-slice technique as the photo's own
+    /// `PhotoFitMode.reflow`: a corner-sized margin at each edge (sized to
+    /// safely contain the ring's own corner treatment) is copied
+    /// pixel-for-pixel, and only the straight edge segments between them
+    /// stretch or compress. Height is kept at the art's native height;
+    /// width is solved from `targetAspect`. Returns the reshaped artwork
+    /// (alpha preserved) and where the photo window landed in it — the
+    /// window's corner-anchored edges keep the same pixel inset from their
+    /// nearest canvas edge, since they sit inside the untouched corner
+    /// bands.
+    private static func reflowOverlayArt(overlayCG: CGImage, nativeWindow: CGRect, targetAspect: CGFloat) -> (image: CGImage, window: CGRect)? {
+        let W = CGFloat(overlayCG.width), H = CGFloat(overlayCG.height)
+        let insetLeft = nativeWindow.minX
+        let insetTop = nativeWindow.minY
+        let insetRight = W - nativeWindow.maxX
+        let insetBottom = H - nativeWindow.maxY
+
+        // A little beyond the window's own inset, to fully protect whatever
+        // corner flourish the art has (rounded corners, brush texture) —
+        // matched against a prototype that held up well at +10px on a
+        // ~2800px-wide source; scale that margin with resolution.
+        let cornerMargin = max(insetLeft, insetTop, insetRight, insetBottom) + (W * 0.0035)
+
+        let targetH = H
+        let targetW = targetH * targetAspect
+        let safeCorner = min(cornerMargin, W / 2 - 1, H / 2 - 1, targetW / 2 - 1, targetH / 2 - 1)
+        guard safeCorner > 1 else { return nil }
+
+        let srcXs: [CGFloat] = [0, safeCorner, W - safeCorner, W]
+        let srcYs: [CGFloat] = [0, safeCorner, H - safeCorner, H]
+        let dstXs: [CGFloat] = [0, safeCorner, targetW - safeCorner, targetW]
+        let dstYs: [CGFloat] = [0, safeCorner, targetH - safeCorner, targetH]
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false // preserve alpha -- this is border art, not a final flattened composite
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: targetW, height: targetH), format: format)
+        let outImage = renderer.image { _ in
+            for row in 0..<3 {
+                for col in 0..<3 {
+                    let srcRect = CGRect(x: srcXs[col], y: srcYs[row],
+                                          width: srcXs[col + 1] - srcXs[col], height: srcYs[row + 1] - srcYs[row]).integral
+                    let dstRect = CGRect(x: dstXs[col], y: dstYs[row],
+                                          width: dstXs[col + 1] - dstXs[col], height: dstYs[row + 1] - dstYs[row])
+                    guard srcRect.width > 0, srcRect.height > 0, dstRect.width > 0, dstRect.height > 0,
+                          let patch = overlayCG.cropping(to: srcRect) else { continue }
+                    UIImage(cgImage: patch).draw(in: dstRect)
+                }
+            }
+        }
+        guard let outCG = outImage.cgImage else { return nil }
+
+        // The window's corner-anchored edges sit inside the untouched
+        // corner bands, so they keep the same pixel inset from their
+        // nearest canvas edge in the reshaped art.
+        let newWindow = CGRect(x: insetLeft, y: insetTop,
+                                width: targetW - insetLeft - insetRight, height: targetH - insetTop - insetBottom)
+        return (outCG, newWindow)
     }
 
     // MARK: - Shared photo preparation (crop or 9-slice reflow to a target ratio)

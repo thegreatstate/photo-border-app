@@ -123,8 +123,21 @@ stroke) pending a real scan of one of those.
 
 ## Adding more real borders
 
-For a **straight-edged** carrier: send the photo and I'll repeat the
-top/left-and-mirror extraction above.
+Drop reference photos into `Borders/` at the repo root (create it if it's
+not there) — commit and push from GitHub Desktop (or `git`) and I'll pull
+them from there. That folder is just for raw source material, not app
+assets; it's separate from `SharedAssets/Assets.xcassets`, which only holds
+what's actually wired into a `BorderTemplate` and shipped in the app.
+
+If what you drop in is already a finished transparent PNG (interior *and*
+everything outside the ring already cut to alpha 0 — check with
+`im.getchannel('A').getextrema()` in Pillow, or just open it over a colored
+background), there's no extraction to do at all: it goes straight into
+`SharedAssets/Assets.xcassets` and gets a `BorderTemplate` entry. That's
+how `mamiya-border` (below) got added.
+
+For a **straight-edged** carrier that isn't already cut out: send the photo
+and I'll repeat the top/left-and-mirror extraction above.
 
 For a **hand-torn/irregular** carrier, or if you'd rather do it yourself in
 Photoshop:
@@ -148,3 +161,44 @@ quality.
 
 Repeat per aspect ratio / stock you shoot (6x6, 35mm, 4x6, 5x6, panoramic,
 etc.) — each is one more `BorderTemplate` entry in the catalog.
+
+## Stretching a border to a different aspect ratio (`mamiya-border`)
+
+`mamiya-border` is a real pre-made transparent PNG you supplied directly
+(no extraction needed — see above), with one edit: the original file had a
+soft gray brush texture outside the black ring (partial alpha, not just
+0/255). Per your call, that got cleaned out — `Borders/Mamiya Border.png`
+is the untouched original; the shipped asset keeps only pixels darker than
+~47% gray as opaque almost everywhere, so it reads as a clean black line on
+flat white rather than a textured edge.
+
+That threshold alone left a defect worth knowing about, since the same fix
+applies to any future asset cleaned this way: each corner has its own
+light-gray highlight (part of the art's actual corner rendering, not
+outer texture), the same tone as the unwanted texture, physically
+touching it in places — so no plain darkness threshold or connected-
+components pass can separate "keep" from "drop" by color or topology alone
+at the corners specifically. Thresholding by darkness alone bit a chunk out
+of the ring at each corner, leaving a gap where white showed through
+between the photo and the ring. The fix: keep the darkness threshold
+everywhere except a small protected zone at each of the four corners,
+where the original pixels are restored untouched — trading a faint,
+barely-visible fleck of the outer texture at just the four corners for a
+structurally solid ring everywhere, which matters far more. Straight
+edges away from the corners were never affected by any of this.
+
+Its native shape is square, but
+`BorderRenderer.render(...)` takes an optional `targetOverlayAspect`: pass
+a different width/height ratio and the border artwork itself gets reshaped
+to it with the same corner-preserving 9-slice technique `PhotoFitMode
+.reflow` already uses on photos (see `reflowOverlayArt` in
+`BorderRenderer.swift`) — corners stay pixel-perfect, only the straight
+edge segments between them stretch or compress. Leave it `nil` (the
+default) and the border renders at whatever aspect its art was authored
+at, unchanged.
+
+This is the option to reach for when you want the *photo* left uncropped
+in its own natural aspect ratio and the *border* to adapt to it, rather
+than cropping the photo down to match a fixed-shape border (which is what
+happens when `targetOverlayAspect` is left `nil` and the photo's aspect
+doesn't match the art's).
