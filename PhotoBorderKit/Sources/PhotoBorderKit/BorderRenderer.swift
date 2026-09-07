@@ -2,20 +2,35 @@ import UIKit
 
 public enum BorderRenderer {
 
+    /// For overlay-based templates only (ignored for procedural ones, which
+    /// already adapt to any aspect ratio): how the border artwork's aspect
+    /// ratio relates to the photo's own.
+    public enum OverlayAspectMode {
+        /// The default and the standing rule: never touch the photo's own
+        /// format. The border artwork is reshaped (corner-preserving
+        /// 9-slice, see `reflowOverlayArt`) to match the photo's aspect
+        /// ratio exactly, so nothing about the photo gets cropped or
+        /// distorted to fit the border.
+        case matchPhoto
+        /// Use the border art's own authored aspect ratio as-is, and crop
+        /// the photo to fit it instead. Only for when a specific format is
+        /// explicitly wanted — e.g. the border itself was scanned at a
+        /// print ratio you're deliberately printing to.
+        case nativeArt
+        /// Force a specific width/height ratio, reshaping the border art to
+        /// it (photo is then cropped/fit into that same ratio) — for an
+        /// explicit print size (e.g. 11x14) independent of both the art's
+        /// native shape and the photo's own.
+        case fixed(Double)
+    }
+
     /// Composites `image` into `template`, producing the final bordered photo
     /// at (approximately) the source photo's own resolution.
     public static func render(
         image: UIImage,
         template: BorderTemplate,
         fit: PhotoFitMode = .crop,
-        /// For overlay-based templates only: reshape the border artwork
-        /// itself (not just the photo) to this width/height aspect using
-        /// the same corner-preserving 9-slice technique as `PhotoFitMode
-        /// .reflow` — e.g. take a square Mamiya-style border to 4x6.
-        /// `nil` keeps the overlay at whatever aspect its artwork was
-        /// authored at (the existing, unchanged default). Ignored for
-        /// procedural templates, which already adapt to any aspect ratio.
-        targetOverlayAspect: Double? = nil,
+        overlayAspect: OverlayAspectMode = .matchPhoto,
         textLayers: [TextLayer] = [],
         aspectRatios: [AspectRatio] = AspectRatio.builtIn
     ) -> UIImage? {
@@ -28,8 +43,18 @@ public enum BorderRenderer {
 
         let result: UIImage?
         if let overlayName = template.overlayAssetName, let window = template.overlayPhotoWindow {
+            let targetAspect: CGFloat?
+            switch overlayAspect {
+            case .matchPhoto:
+                guard let cg = image.cgImage else { return nil }
+                targetAspect = CGFloat(cg.width) / CGFloat(cg.height)
+            case .nativeArt:
+                targetAspect = nil
+            case .fixed(let ratio):
+                targetAspect = CGFloat(ratio)
+            }
             result = renderWithOverlay(image: image, overlayAssetName: overlayName, photoWindow: window,
-                                        fit: fit, targetAspect: targetOverlayAspect.map(CGFloat.init))
+                                        fit: fit, targetAspect: targetAspect)
         } else {
             result = renderProcedural(image: image, template: template, fit: fit, aspectRatios: aspectRatios)
         }

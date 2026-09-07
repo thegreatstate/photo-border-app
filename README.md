@@ -187,18 +187,22 @@ barely-visible fleck of the outer texture at just the four corners for a
 structurally solid ring everywhere, which matters far more. Straight
 edges away from the corners were never affected by any of this.
 
-Its native shape is square, but
-`BorderRenderer.render(...)` takes an optional `targetOverlayAspect`: pass
-a different width/height ratio and the border artwork itself gets reshaped
-to it with the same corner-preserving 9-slice technique `PhotoFitMode
-.reflow` already uses on photos (see `reflowOverlayArt` in
-`BorderRenderer.swift`) — corners stay pixel-perfect, only the straight
-edge segments between them stretch or compress. Leave it `nil` (the
-default) and the border renders at whatever aspect its art was authored
-at, unchanged.
+Its native shape is square, but that's just an accident of this particular
+source file, not a deliberate format choice — **the standing rule is that
+a photo's own aspect ratio never gets touched unless you explicitly ask
+for a specific one.** So `BorderRenderer.render(...)`'s `overlayAspect`
+parameter defaults to `.matchPhoto`: the border artwork itself gets
+reshaped to whatever aspect ratio the photo already has, using the same
+corner-preserving 9-slice technique `PhotoFitMode.reflow` already uses on
+photos (see `reflowOverlayArt` in `BorderRenderer.swift`) — corners stay
+pixel-perfect, only the straight edge segments between them stretch or
+compress. A portrait photo gets a portrait border, a landscape photo gets
+a landscape border, automatically, with nothing cropped or distorted.
 
-This is the option to reach for when you want the *photo* left uncropped
-in its own natural aspect ratio and the *border* to adapt to it, rather
-than cropping the photo down to match a fixed-shape border (which is what
-happens when `targetOverlayAspect` is left `nil` and the photo's aspect
-doesn't match the art's).
+Two other modes exist for when a specific format *is* explicitly wanted:
+`.nativeArt` uses the border's own authored aspect as-is and crops the
+photo to fit it (this was the old default, before the standing rule);
+`.fixed(ratio)` forces a specific width/height ratio (e.g. an 11x14 print)
+independent of both the photo's and the art's own shape. Neither is used
+by default anywhere in the app — `.matchPhoto` is, everywhere, until told
+otherwise.
