@@ -179,6 +179,16 @@ public enum BorderRenderer {
             return nil
         }
 
+        // Draw the photo slightly larger than the measured window, bleeding
+        // a touch under the ring on every side, rather than meeting it
+        // edge-to-edge — any small imprecision in exactly where a window
+        // was measured (or a future asset's window) then falls safely
+        // under the opaque ring instead of showing as a gap. Both
+        // dimensions scale by the same factor, so this doesn't distort the
+        // photo's aspect ratio.
+        let overscan: CGFloat = 0.008
+        let drawRect = photoRect.insetBy(dx: -photoRect.width * overscan, dy: -photoRect.height * overscan)
+
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -186,7 +196,7 @@ public enum BorderRenderer {
         return renderer.image { ctx in
             UIColor.white.setFill()
             ctx.cgContext.fill(CGRect(origin: .zero, size: canvasSize))
-            UIImage(cgImage: croppedCG).draw(in: photoRect)
+            UIImage(cgImage: croppedCG).draw(in: drawRect)
             UIImage(cgImage: overlayCG).draw(in: CGRect(origin: .zero, size: canvasSize))
         }
     }
