@@ -206,3 +206,40 @@ photo to fit it (this was the old default, before the standing rule);
 independent of both the photo's and the art's own shape. Neither is used
 by default anywhere in the app — `.matchPhoto` is, everywhere, until told
 otherwise.
+
+## Darkroom B&W (`DarkroomBW.swift`)
+
+A B&W mode is not a slider on the color-editing panel — a genuine
+darkroom conversion and a color photo have almost nothing in common in
+what they need control over, so this is a separate, deliberately minimal
+mode (`DarkroomBWSettings` / `DarkroomBWProcessor`), modeled directly on
+AgBr's own control set rather than Apple Photos' slider bank:
+
+- **Color Filter** (none/yellow/orange/red/green) — a real channel-mixer
+  conversion (each filter is a fixed R/G/B weighting), not a desaturation.
+  A desaturated pixel loses all its original hue information; this doesn't
+  — a red filter genuinely darkens blue sky and lightens skin, the way
+  shooting panchromatic film through a colored lens filter does.
+- **Film Size** (35mm/120/4x5) — grain scale. A smaller negative enlarged
+  more shows coarser grain at a given output size than a larger one.
+- **Density** — the print's own base tone, independent of exposure.
+- **Pull/Push** — one control, not two: real push/pull processing couples
+  contrast and grain together (push = more of both; pull = less of both),
+  so this drives both at once rather than exposing them as separate knobs
+  that could be set inconsistently with how film actually behaves.
+- **Exposure** — separate from Density on purpose: a real darkroom print
+  has both a negative's own density *and* how long you expose the paper
+  under the enlarger, and those are genuinely different variables even
+  though both end up shifting brightness.
+
+This was prototyped in Python against a real photo before being ported
+(same as the border extraction work) — the recipe you're seeing here is
+calibrated, not guessed. One thing that prototype does that the Swift port
+doesn't yet: grain intensity there is modulated by local luminance (more
+visible in shadows/mid-tones, fades in highlights); porting that cleanly
+needs a custom `CIKernel` for per-pixel masking, which felt like more to
+get wrong blind than to ship — the Swift version applies uniform grain
+strength across the tone range instead. Worth revisiting once this is
+actually running in Xcode and you can see if flat highlights read as
+grainy. I have not been able to compile or run any of this Swift code —
+same caveat as the rest of this project.
