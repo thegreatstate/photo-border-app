@@ -114,13 +114,20 @@ public enum BorderRenderer {
             var rect = CGRect(x: 0, y: 0, width: canvasSize.width, height: canvasSize.height - extraBottom)
             for band in template.bands.reversed() {
                 guard let color = UIColor(hex: band.colorHex) else { continue }
-                color.setFill()
+                // The boundary facing outward (toward whatever's already
+                // been drawn — the mat, or the canvas edge) is where a
+                // filed-out carrier's hand-worked roughness belongs. The
+                // boundary facing inward (toward the photo) is the
+                // camera's own film gate opening — a precise mechanical
+                // edge, always clean — so irregularity is drawn on `rect`
+                // (this band's own outer edge) before it gets inset, never
+                // on the inner edge below.
+                if band.irregularEdge {
+                    drawIrregularEdge(in: cg, boundary: rect, color: color, jitter: max(1, shortSide * 0.008))
+                }
                 cg.fill(rect)
                 let w = CGFloat(band.widthFraction) * shortSide
                 let innerEdge = rect.insetBy(dx: w, dy: w)
-                if band.irregularEdge {
-                    drawIrregularEdge(in: cg, boundary: innerEdge, color: color, jitter: max(1, shortSide * 0.008))
-                }
                 rect = innerEdge
             }
 
@@ -129,10 +136,13 @@ public enum BorderRenderer {
     }
 
     /// Draws a hand-torn-looking jittered outline centered on `boundary`, in
-    /// `color`, so the band it belongs to bites raggedly into whatever gets
-    /// drawn next inside it. This is a rough procedural stand-in for a real
-    /// negative-carrier's rebate edge — swap in a scanned overlay
-    /// (`overlayAssetName`) for the real thing.
+    /// `color`, so the band bites raggedly into whatever was already drawn
+    /// outside it (a coarser band, or the canvas edge). Only ever called on
+    /// a band's *outer* boundary (`rect`, before it's inset) — the inner
+    /// boundary, facing the photo, is the camera's own film gate opening in
+    /// real life and stays a clean rectangle no matter what. This is a rough
+    /// procedural stand-in for a real negative-carrier's filed edge — swap
+    /// in a scanned overlay (`overlayAssetName`) for the real thing.
     private static func drawIrregularEdge(in cg: CGContext, boundary: CGRect, color: UIColor, jitter: CGFloat) {
         let stepsPerSide = 24
         func jittered(_ p: CGPoint) -> CGPoint {

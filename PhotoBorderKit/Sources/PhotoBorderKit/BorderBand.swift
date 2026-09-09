@@ -8,8 +8,12 @@ public struct BorderBand: Identifiable, Codable, Hashable {
     public var widthFraction: Double
     /// Hex color, e.g. "#FFFFFF".
     public var colorHex: String
-    /// If true, the inner edge of this band is drawn as a jittered, hand-torn
-    /// line instead of a clean straight edge.
+    /// If true, this band's *outer* edge (away from the photo, toward
+    /// whatever's drawn beyond it) is jittered instead of a clean straight
+    /// line. The inner edge, facing the photo, is never touched by this —
+    /// it's the camera's own film gate opening in real life, a precise
+    /// mechanical edge that's always clean regardless of how roughly a
+    /// carrier was filed out beyond it.
     public var irregularEdge: Bool
 
     public init(id: String, widthFraction: Double, colorHex: String, irregularEdge: Bool = false) {
