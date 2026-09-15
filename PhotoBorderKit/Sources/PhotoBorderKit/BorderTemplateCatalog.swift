@@ -84,7 +84,11 @@ public enum BorderTemplateCatalog {
         overlayPhotoWindow: NormalizedRect(x: 0.0554, y: 0.0556, width: 0.8936, height: 0.8973)
     )
 
+    // Plain names, not dot-shorthand (.polaroid etc.) -- this array's element
+    // type is BorderTemplate, so `.polaroid` would resolve against
+    // BorderTemplate's own static members (there are none) instead of
+    // BorderTemplateCatalog's, which is what these actually are.
     public static let builtIn: [BorderTemplate] = [
-        .polaroid, .scannedRebate5x7, .mamiyaBorder, .negativeCarrier6x6, .negativeCarrier35mm, .keyline, .clean,
+        polaroid, scannedRebate5x7, mamiyaBorder, negativeCarrier6x6, negativeCarrier35mm, keyline, clean,
     ]
 }
